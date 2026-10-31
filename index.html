@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kasatria - 3D Data Visualization Assignment</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        /* Style untuk Skrin Log Masuk Google (Image A) */
+        /* Latar belakang overlay login mengikut tema sistem peranti (Light / Dark) */
+        #login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            /* Warna latar belakang overlay dinamik mengikut tema sistem */
+            background: rgba(255, 255, 255, 0.95); 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 999;
+            transition: background 0.3s ease;
+        }
+
+        /* Jika peranti pengguna menggunakan mod gelap (Dark Mode), overlay jadi gelap */
+        @media (prefers-color-scheme: dark) {
+            #login-overlay {
+                background: rgba(15, 15, 15, 0.95);
+            }
+        }
+
+        /* Kad Login */
+        .login-card {
+            background: #ffffff;
+            color: #333333;
+            padding: 40px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            width: 400px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .login-card h2 { 
+            font-weight: 500; 
+            font-size: 22px;
+            margin-bottom: 10px; 
+            color: #111;
+        }
+
+        .login-card p { 
+            font-size: 13px; 
+            color: #666; 
+            margin-bottom: 30px; 
+        }
+        
+        /* Sokongan Dark Mode untuk Kad Log Masuk */
+        @media (prefers-color-scheme: dark) {
+            .login-card {
+                background: #1e1e1e;
+                color: #f0f0f0;
+                border: 1px solid #333;
+            }
+            .login-card h2 {
+                color: #ffffff;
+            }
+            .login-card p {
+                color: #aaaaaa;
+            }
+        }
+
+        #google-signin-btn {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+        }
+        
+        /* Butang Mod Paparan 3D di Bawah */
+        #menu {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            z-index: 10;
+        }
+        button.menu-btn {
+            color: rgba(127,255,255,0.75);
+            background: transparent;
+            outline: 1px solid rgba(127,255,255,0.75);
+            border: 0px;
+            padding: 5px 10px;
+            cursor: pointer;
+            margin: 0 5px;
+            border-radius: 4px;
+        }
+        button.menu-btn:hover { background-color: rgba(127,255,255,0.75); color: #000; }
+        .element {
+            width: 140px;
+            height: 180px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 8px;
+            font-family: sans-serif;
+            border-radius: 2px !important; /* sharpness */
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Skrin Log Masuk -->
+    <div id="login-overlay">
+        <div class="login-card">
+            <h2>Welcome Back</h2>
+            <p>Lorem ipsum dolor sit amet, consectetuer adipiscing elit</p>
+            <!-- Butang Google Sign-In -->
+            <div id="google-signin-btn"></div>
+        </div>
+    </div>
+
+    <!-- Container Utama Three.js -->
+    <div id="container"></div>
+
+    <!-- Menu Butang Pertukaran Bentuk 3D -->
+    <div id="menu">
+        <button id="table" class="menu-btn">TABLE</button>
+        <button id="sphere" class="menu-btn">SPHERE</button>
+        <button id="helix" class="menu-btn">HELIX</button>
+        <button id="grid" class="menu-btn">GRID</button>
+    </div>
+
+    <!-- Pustaka JavaScript Diperlukan (Three.js & Google GIS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS3DRenderer.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+    <script src="app.js"></script>
+</body>
+</html>
