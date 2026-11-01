@@ -1,167 +1,228 @@
 // ==========================================
-// 1. CONFIGURATION
+// Configuration
 // ==========================================
-const GOOGLE_CLIENT_ID = "285457271466-16p1mhfimanl8jcmeebenlkd0llah0kb.apps.googleusercontent.com"; 
-const SPREADSHEET_ID = "1c455xhbJeci3T3Ny-ykKkKdNmsyi-Vd81_NsJPHEUgs";    
+const GOOGLE_CLIENT_ID = "285457271466-16p1mhfimanl8jcmeebenlkd0llah0kb.apps.googleusercontent.com";
+const SPREADSHEET_ID = "1c455xhbJeci3T3Ny-ykKkKdNmsyi-Vd81_NsJPHEUgs";
 
-// URL untuk tarik data Google Sheet dalam format CSV/JSON
+// The sheet is read as CSV through the Google Sheets "gviz" endpoint
 const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv`;
 
-// ==========================================
-// 2. GOOGLE SIGN-IN INTEGRATION (IMAGE A)
-// ==========================================
-window.onload = function () {
-    if (typeof google !== 'undefined') {
-        google.accounts.id.initialize({
-            client_id: GOOGLE_CLIENT_ID,
-            callback: handleCredentialResponse
-        });
-        
-        google.accounts.id.renderButton(
-            document.getElementById("google-signin-btn"),
-            { theme: "filled_blue", size: "large", width: "180" }
-        );
-    }
+// Net worth tiers: red < $100K, orange $100K-$200K, green > $200K
+const TIERS = {
+    low:  { color: '#EF3022', tint: 'rgba(239, 48, 34, 0.4)',  label: '< $100K' },
+    mid:  { color: '#FDCA35', tint: 'rgba(253, 202, 53, 0.4)', label: '$100K – $200K' },
+    high: { color: '#3A9F48', tint: 'rgba(58, 159, 72, 0.4)',  label: '> $200K' }
 };
 
-function handleCredentialResponse(response) {
-    console.log("Encoded JWT ID token: " + response.credential);
-    
-    // Sembunyikan skrin login lepas berjaya log masuk
-    document.getElementById("login-overlay").style.display = "none";
-    
-    // Mula download data Google Sheet dan bina 3D Periodic Table
+function getTier(networth) {
+    if (networth < 100000) return TIERS.low;
+    if (networth <= 200000) return TIERS.mid;
+    return TIERS.high;
+}
+
+// Plain grey square shown when a photo fails to load
+const FALLBACK_PHOTO = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="115" height="115"><rect width="115" height="115" fill="#222"/></svg>'
+);
+
+// ==========================================
+// Google Sign-In (Image A)
+// ==========================================
+window.onload = function () {
+    if (typeof google === 'undefined') {
+        console.error('Google Identity Services failed to load.');
+        return;
+    }
+
+    google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleCredentialResponse
+    });
+
+    google.accounts.id.renderButton(
+        document.getElementById("google-signin-btn"),
+        { theme: "filled_blue", size: "large", width: "180" }
+    );
+};
+
+let appStarted = false;
+
+function handleCredentialResponse() {
+    if (appStarted) return;
     initApp();
 }
 
 // ==========================================
-// 3. PARSING DATA GOOGLE SHEET (CSV)
+// Sheet data
 // ==========================================
 let tableData = [];
+
+// Minimal CSV parser: handles quoted fields, escaped quotes and commas inside quotes
+function parseCSV(text) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+            if (ch === '"' && text[i + 1] === '"') {
+                field += '"';
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                field += ch;
+            }
+        } else if (ch === '"') {
+            inQuotes = true;
+        } else if (ch === ',') {
+            row.push(field);
+            field = '';
+        } else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && text[i + 1] === '\n') i++;
+            row.push(field);
+            field = '';
+            rows.push(row);
+            row = [];
+        } else {
+            field += ch;
+        }
+    }
+    if (field !== '' || row.length > 0) {
+        row.push(field);
+        rows.push(row);
+    }
+    return rows;
+}
 
 async function fetchSheetData() {
     try {
         const response = await fetch(SHEET_CSV_URL);
-        const dataText = await response.text();
-        
-        // Split ikut baris
-        const rows = dataText.split('\n').map(row => row.trim()).filter(row => row.length > 0);
-        
-        // Abaikan header (baris 0) jika ada, ambil baris data sahaja
-        const parsed = [];
-        for (let i = 1; i < rows.length; i++) {
-            // RegEx untuk parse CSV berasaskan comma & quotes
-            const cols = rows[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
-            const cleanCols = cols.map(c => c.replace(/^"|"$/g, '').trim());
-            
-            if (cleanCols.length >= 6) {
-                // Parse nilai Networth daripada teks ($251,260.80 -> 251260.80)
-                const rawNetworth = cleanCols[5].replace(/[\$,]/g, '');
-                const networthVal = parseFloat(rawNetworth) || 0;
-                
-                parsed.push({
-                    name: cleanCols[0],
-                    photo: cleanCols[1],
-                    age: cleanCols[2],
-                    country: cleanCols[3],
-                    interest: cleanCols[4],
-                    networthStr: cleanCols[5],
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const rows = parseCSV(await response.text());
+
+        // Skip the header row. Column order: Name, Photo, Age, Country, Interest, Net Worth
+        return rows
+            .slice(1)
+            .filter(cols => cols.length >= 6)
+            .map(cols => {
+                const c = cols.map(value => value.trim());
+                // "$251,260.80" -> 251260.80
+                const networthVal = parseFloat(c[5].replace(/[$,]/g, '')) || 0;
+                return {
+                    name: c[0],
+                    photo: c[1],
+                    age: c[2],
+                    country: c[3],
+                    interest: c[4],
+                    networthStr: c[5],
                     networthVal: networthVal
-                });
-            }
-        }
-        return parsed;
+                };
+            });
     } catch (err) {
-        console.error("Gagal membaca Google Sheet:", err);
+        console.error("Failed to read Google Sheet:", err);
         return [];
     }
 }
 
 // ==========================================
-// 4. THREE.JS 3D ENGINE & SCENE SETUP
+// Three.js scene
 // ==========================================
 let camera, scene, renderer, controls;
 const objects = [];
 const targets = { table: [], sphere: [], helix: [], grid: [] };
 
 async function initApp() {
+    appStarted = true;
     tableData = await fetchSheetData();
+
     if (tableData.length === 0) {
-        alert("Data Google Sheet tidak dapat dibaca. Pastikan tetapan Share = Anyone with the link (Viewer)!");
+        appStarted = false;
+        alert("Unable to load data from the Google Sheet. Please check that the sheet is accessible and try again.");
         return;
     }
+
+    // Data loaded: hide login, show controls
+    document.getElementById("login-overlay").style.display = "none";
+    document.getElementById("menu").style.display = "block";
+    buildLegend();
 
     initThreeJS();
     animate();
 }
 
+function buildLegend() {
+    const legend = document.getElementById('legend');
+    Object.values(TIERS).forEach(tier => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.borderColor = tier.color;
+        swatch.style.background = tier.tint;
+
+        const label = document.createElement('span');
+        label.textContent = tier.label;
+
+        item.append(swatch, label);
+        legend.appendChild(item);
+    });
+    legend.style.display = 'flex';
+}
+
+// Builds one tile (Image B): country, age, photo, name, interest
+function createCard(item) {
+    const tier = getTier(item.networthVal);
+
+    const element = document.createElement('div');
+    element.className = 'element';
+    element.style.border = `1.5px solid ${tier.color}`;
+    element.style.background = `linear-gradient(135deg, ${tier.tint} 0%, #111111 70%)`;
+    element.style.boxShadow = `0 0 8px ${tier.color}44`;
+
+    const header = document.createElement('div');
+    header.className = 'card-header';
+    const country = document.createElement('span');
+    country.textContent = item.country;
+    const age = document.createElement('span');
+    age.textContent = item.age;
+    header.append(country, age);
+
+    const photo = document.createElement('img');
+    photo.className = 'card-photo';
+    photo.style.borderColor = tier.color;
+    photo.alt = item.name;
+    photo.onerror = () => {
+        photo.onerror = null;
+        photo.src = FALLBACK_PHOTO;
+    };
+    photo.src = item.photo;
+
+    const name = document.createElement('div');
+    name.className = 'card-name';
+    name.textContent = item.name;
+
+    const interest = document.createElement('div');
+    interest.className = 'card-interest';
+    interest.textContent = item.interest;
+
+    element.append(header, photo, name, interest);
+    return element;
+}
+
 function initThreeJS() {
     camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 10000);
-    camera.position.z = 3000;
+    camera.position.z = 3500;
 
     scene = new THREE.Scene();
 
-    // ------------------------------------------
-    // A. BINA OBJECTS (IMAGE B DATA STRUCTURE)
-    // ------------------------------------------
+    // Tiles start at random positions and animate into the first layout
     for (let i = 0; i < tableData.length; i++) {
-        const item = tableData[i];
-
-        const element = document.createElement('div');
-        element.className = 'element';
-        
-        // Styling Asas Kad 3D
-        element.style.width = '140px';
-        element.style.height = '180px';
-        element.style.boxShadow = '0px 0px 12px rgba(0,255,255,0.5)';
-        element.style.border = '1px solid rgba(127,255,255,0.25)';
-        element.style.borderRadius = '8px';
-        element.style.padding = '8px';
-        element.style.boxSizing = 'border-box';
-        element.style.display = 'flex';
-        element.style.flexDirection = 'column';
-        element.style.alignItems = 'center';
-        element.style.justifyContent = 'space-between';
-        element.style.fontFamily = 'sans-serif';
-        element.style.cursor = 'default';
-
-        // WARNA BACKGROUND BERDASARKAN NETWORTH (Syarat 5)
-        // Red(#EF3022) < $100K, Orange(#FDCA35) <= $200K & Green(#3A9F48) > $200K
-        let borderColor = '#EF3022';
-        let bgColor = 'rgba(239, 48, 34, 0.15)'; // Kesan glow malap di dalam kad
-
-        if (item.networthVal < 100000) {
-            borderColor = '#EF3022'; // Merah
-            bgColor = 'rgba(239, 48, 34, 0.18)';
-        } else if (item.networthVal <= 200000) {
-            borderColor = '#FDCA35'; // Kuning/Oren
-            bgColor = 'rgba(253, 202, 53, 0.18)';
-        } else {
-            borderColor = '#3A9F48'; // Hijau
-            bgColor = 'rgba(58, 159, 72, 0.18)';
-        }
-
-        // Set border luar tajam dan background glowing
-        element.style.border = `1.5px solid ${borderColor}`;
-        element.style.background = `linear-gradient(135deg, ${bgColor} 0%, #111111 70%)`;
-        element.style.boxShadow = `0 0 8px ${borderColor}44`; // Kesan cahaya neon halus di luar kotak
-
-        // Susunan kandungan dalam kad mengikut rujukan rubrik
-        element.innerHTML = `
-            <div style="display: flex; justify-content: space-between; width: 100%; font-size: 10px; color: #ddd; font-weight: bold; padding: 0 4px;">
-                <span>${item.country}</span>
-                <span>${item.age}</span>
-            </div>
-            <img src="${item.photo}" style="width:115px; height:115px; object-fit:cover; border-radius:2px; border:1px solid ${borderColor};">
-            <div style="font-weight:bold; font-size:11px; color:#fff; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%;">
-                ${item.name}
-            </div>
-            <div style="font-size:9px; color:#aaa; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%;">
-                ${item.interest}
-            </div>
-        `;
-
-        const objectCSS = new THREE.CSS3DObject(element);
+        const objectCSS = new THREE.CSS3DObject(createCard(tableData[i]));
         objectCSS.position.x = Math.random() * 4000 - 2000;
         objectCSS.position.y = Math.random() * 4000 - 2000;
         objectCSS.position.z = Math.random() * 4000 - 2000;
@@ -171,7 +232,7 @@ function initThreeJS() {
     }
 
     // ------------------------------------------
-    // B. SUSUNAN 1: TABLE (20 x 10) (Syarat 7)
+    // Layout 1: Table (20 x 10)
     // ------------------------------------------
     const cols = 20;
     for (let i = 0; i < objects.length; i++) {
@@ -187,7 +248,7 @@ function initThreeJS() {
     }
 
     // ------------------------------------------
-    // C. SUSUNAN 2: SPHERE
+    // Layout 2: Sphere
     // ------------------------------------------
     const vector = new THREE.Vector3();
     for (let i = 0, l = objects.length; i < l; i++) {
@@ -203,15 +264,20 @@ function initThreeJS() {
     }
 
     // ------------------------------------------
-    // D. SUSUNAN 3: DOUBLE HELIX (Syarat 8)
+    // Layout 3: Double helix
+    // Even tiles go on strand 0, odd tiles on strand 1 (180 degrees apart).
+    // phiStep sets how tightly each strand winds; yStep sets the height per tile.
+    // With 100 tiles per strand this gives about 3 turns, and the two strands
+    // stay clearly separated vertically.
     // ------------------------------------------
+    const phiStep = 0.19;
+    const yStep = 20;
     for (let i = 0, l = objects.length; i < l; i++) {
-        // Asingkan kepada 2 rantai (Strand 0 & Strand 1) untuk hasilkan Double Helix
-        const strand = i % 2; 
+        const strand = i % 2;
         const indexInStrand = Math.floor(i / 2);
-        
-        const phi = indexInStrand * 0.25 + (strand * Math.PI); // Fasa 180 darjah pemisah
-        const y = -(indexInStrand * 16) + 1200;
+
+        const phi = indexInStrand * phiStep + (strand * Math.PI);
+        const y = -(indexInStrand * yStep) + 1000;
 
         const object = new THREE.Object3D();
         object.position.setFromCylindricalCoords(900, phi, y);
@@ -225,9 +291,9 @@ function initThreeJS() {
     }
 
     // ------------------------------------------
-    // E. SUSUNAN 4: GRID (5 x 4 x 10) (Syarat 9 & Image C)
+    // Layout 4: Grid (5 x 4 x 10 = 200 tiles)
+    // 10 across (X), 4 down (Y), 5 deep (Z)
     // ------------------------------------------
-    // 5 kedalaman (Z), 4 baris tinggi (Y), 10 lebar (X) -> Total 200 tiles
     for (let i = 0; i < objects.length; i++) {
         const object = new THREE.Object3D();
 
@@ -242,7 +308,7 @@ function initThreeJS() {
         targets.grid.push(object);
     }
 
-    // RENDERER & CONTROLS
+    // Renderer and controls
     renderer = new THREE.CSS3DRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById('container').appendChild(renderer.domElement);
@@ -252,59 +318,66 @@ function initThreeJS() {
     controls.maxDistance = 6000;
     controls.addEventListener('change', render);
 
-    // EVEN HANDLERS BUTANG MENU
+    // Layout buttons
     document.getElementById('table').addEventListener('click', () => transform(targets.table, 2000));
     document.getElementById('sphere').addEventListener('click', () => transform(targets.sphere, 2000));
     document.getElementById('helix').addEventListener('click', () => transform(targets.helix, 2000));
     document.getElementById('grid').addEventListener('click', () => transform(targets.grid, 2000));
 
-    // Mula dengan bentuk Table
+    // Start with the table layout
     transform(targets.table, 2000);
 
     window.addEventListener('resize', onWindowResize);
 }
 
 // ------------------------------------------
-// ANIMASI TRANSISI (TRANSFORM)
+// Layout transitions
 // ------------------------------------------
+// Starts a transition for every tile. A new transition replaces any running one
+// on the same tile, so clicking buttons quickly does not make tiles jitter.
 function transform(targetArray, duration) {
+    const now = performance.now();
+
     for (let i = 0; i < objects.length; i++) {
         const object = objects[i];
         const target = targetArray[i];
-
         if (!target) continue;
 
-        // Simple interpolation animation (LERP)
-        new SimpleTween(object.position, target.position, duration);
-        new SimpleTween(object.rotation, target.rotation, duration);
+        object.userData.tween = {
+            startTime: now,
+            duration: duration,
+            fromPos: object.position.clone(),
+            toPos: target.position,
+            fromRot: object.rotation.clone(),
+            toRot: target.rotation
+        };
     }
 }
 
-// Helper Ringkas Animation Tween
-class SimpleTween {
-    constructor(source, target, duration) {
-        const startX = source.x, startY = source.y, startZ = source.z;
-        const targetX = target.x, targetY = target.y, targetZ = target.z;
-        const startTime = performance.now();
+// Advances all running transitions. Returns true if anything moved this frame.
+function updateTweens() {
+    const now = performance.now();
+    let moved = false;
 
-        function update() {
-            const elapsed = performance.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            // Easing function (easeOutCubic)
-            const ease = 1 - Math.pow(1 - progress, 3);
+    for (let i = 0; i < objects.length; i++) {
+        const object = objects[i];
+        const tween = object.userData.tween;
+        if (!tween) continue;
 
-            source.x = startX + (targetX - startX) * ease;
-            source.y = startY + (targetY - startY) * ease;
-            source.z = startZ + (targetZ - startZ) * ease;
+        const progress = Math.min((now - tween.startTime) / tween.duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3); // easeOutCubic
 
-            render();
+        object.position.lerpVectors(tween.fromPos, tween.toPos, ease);
+        object.rotation.set(
+            tween.fromRot.x + (tween.toRot.x - tween.fromRot.x) * ease,
+            tween.fromRot.y + (tween.toRot.y - tween.fromRot.y) * ease,
+            tween.fromRot.z + (tween.toRot.z - tween.fromRot.z) * ease
+        );
 
-            if (progress < 1) {
-                requestAnimationFrame(update);
-            }
-        }
-        requestAnimationFrame(update);
+        moved = true;
+        if (progress >= 1) object.userData.tween = null;
     }
+    return moved;
 }
 
 function onWindowResize() {
@@ -316,6 +389,7 @@ function onWindowResize() {
 
 function animate() {
     requestAnimationFrame(animate);
+    if (updateTweens()) render();
     controls.update();
 }
 
