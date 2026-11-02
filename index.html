@@ -161,6 +161,17 @@
         }
         .card-name { font-size: 11px; font-weight: bold; color: #fff; }
         .card-interest { font-size: 9px; color: #aaa; }
+        /* Small screens: put the legend above the layout buttons */
+        @media (max-width: 700px) {
+            #legend {
+                left: 0;
+                right: 0;
+                bottom: 64px;
+                justify-content: center;
+                gap: 10px;
+                font-size: 10px;
+            }
+        }
     </style>
 </head>
 <body>
